@@ -1,0 +1,755 @@
+<!DOCTYPE html>    
+<html>
+	<head>
+    <meta charset="utf-8">
+    <title>DJ Controller</title>
+	</head>
+
+	<body onload="init();">
+ 		<canvas id='canvas' style = 'position: absolute; left: 0px; top: 0px;' onclick="clickEventHandler()" ></canvas>
+		<input id = 'loadDeckA' type="file" style = 'position: absolute; margin-left:20%; bottom: 5%' onchange="loadA()" />​
+		<input id = 'loadDeckB' type="file" style = 'position: absolute; margin-left:53%; bottom: 5%' onchange="loadB()" />​
+		<img src='led2.jpg' id='pattern' style = 'display:none'>
+		<img src='led.jpg' id='ledBackground' style = 'display:none'>
+	</body>
+	<script>
+
+		var isLoadedA = false;	var isLoadedB = false;	//boolean variables to indication tracks are loaded
+		var isPlayingA = false;	var isPlayingB = false; //boolean variables for tracks playing
+		var newLoadedA = false; var newLoadedB = false; //boolean variables used to indicate new track is loaded
+		var rewindA = false; var rewindB = false; //booleans to indicates if a track was rewinded
+		var previewA; var fileA; var readerA; var trackAname; //variables needed to load track from file input for deck A
+		var previewB; var fileB; var readerB; var trackBname; //variables needed to load track from file input for deck A
+		var aDur = 0; var bDur = 0; //variable to store the duration
+		var aRad = 0; var bRad = 0;
+		var lpfDef = 24000;
+		var hpfDef = 0;
+
+		var trackA = new Audio(); //new audio object for track a
+		var trackB = new Audio(); //new audio object for track b
+
+		var contextA = new AudioContext(); //creating an audio context to be used on deck A
+		var contextB = new AudioContext(); //creating an audio context to be used on deck B 
+
+		
+		//default value for a low pass filter doesn't filter anything, i.e. only filters above 24kHz whereas the cutoff of frequency for a 320kbps mp3 file is 20.5kHz
+		//default value for a high pass filter is set to 0 so it only filters below that value.
+
+		//creation of a low pass filter to be used on deck A tracks
+		var lpfA = contextA.createBiquadFilter();
+		lpfA.type = "lowpass";
+		lpfA.frequency.value = lpfDef; 
+		
+
+		//creation of a low pass filter to be used on deck B tracks
+		var lpfB = contextB.createBiquadFilter();
+		lpfB.type = "lowpass";
+		lpfB.frequency.value = lpfDef;
+
+		//creation of a high pass filter to be used on deck A tracks
+		var hpfA = contextA.createBiquadFilter();
+		hpfA.type = "highpass";
+		hpfA.frequency.value = hpfDef;
+
+		//creation of a high pass filter to be used on deck B tracks
+		var hpfB = contextB.createBiquadFilter();
+		hpfB.type = "highpass";
+		hpfB.frequency.value = hpfDef;
+
+		//gets canvas obj
+		c = document.getElementById('canvas');
+		c.addEventListener("mousedown", clickEventHandler, false);
+		ctx = c.getContext('2d');
+
+		//loading images to create canvas patterns
+		var mpat = document.getElementById("pattern");
+		var turnPat;
+		mpat.onload = function() {
+			turnPat=ctx.createPattern(mpat,"repeat");
+		};
+		var bck = document.getElementById("ledBackground");
+		var ledPat;
+		bck.onload = function(){
+
+			ledPat = ctx.createPattern(bck, "repeat");
+		};
+
+		//Gets the sizes of the browser window
+		var dimension = [document.documentElement.clientWidth, document.documentElement.clientHeight];
+		
+		//dynamically sizes canvas to be the size of the available browser window.
+		c.width = dimension[0];
+		c.height = dimension[1] ; 
+
+		var w = c.width; var h = c.height;
+		var mover = w/200; // small variable 1/200 the width of the screen for moving object so canvas is scalable.
+		var cr = w/80; // radius of the corners of the decks
+		var rectX = w/6; //  1/6th across x plane
+		var rectY = h/6; //  1/6th across y plane
+		var rectWidth = rectX*4;	// 2/3 of the width
+		var rectHeight = rectY*4; // 2/3 of the height
+		var i = 0; //counter for deck A flashing light
+		var b = 0; //counter for deck B flashing light
+		var fs;
+
+		//width, headigh and y variables for buttons on controller
+		var butAy = rectY*4.4; // y position for first layer of buttons on each deck
+		var butAy2 = rectY*4.75;  // y position for second layer of buttons on each deck
+		var butAw = mover*5; //width of all buttons
+		var butAh = mover*3; //height of all buttons
+		
+		//x variables for all buttons
+		var playAx = rectX*2.55; //deck A play button
+		var cueAx = rectX*2.55;	//deck A cue
+		var ffA = rectX*2.25; //deck A fast forward button
+		var rwA = rectX*2.25;	//deck A rewind button
+		var volAx = rectX*1.95; //deck A volume + button
+		var volAx2 = rectX*1.95; //deck A volume - button
+		var lpfAx = rectX*1.65;  //deck A low pass filter + button
+		var lpfAx2 = rectX*1.65; //deck A low pass filter - button
+		var hpfAx = rectX*1.35;  //deck A high pass filter + button
+		var hpfAx2 = rectX*1.35; //deck A high pass filter - button
+
+		var playBx = rectX*4.5; //deck B play button coordinates
+		var cueBx = rectX * 4.5; //deck B cue
+		var ffB = rectX*4.2; //deck B fast forward
+		var rwB = rectX*4.2; //deck B rewind
+		var volBx = rectX*3.9; //deck B volume + button
+		var volBx2 = rectX*3.9; //deck B volume - button
+		var lpfBx = rectX*3.6;  //deck B low pass filter + button
+		var lpfBx2 = rectX*3.6; //deck B low pass filter - button
+		var hpfBx = rectX*3.3;  //deck B high pass filter + button
+		var hpfBx2 = rectX*3.3; //deck B high pass filter - button
+		
+		ctx.lineWidth=5;
+
+		function init(){
+
+			//draws grey canvas
+			ctx.fillStyle = "rgb(200,200,200)"; 
+			ctx.fillRect (0, 0, w, h);
+
+			//draws border around in blue
+			ctx.strokeStyle = 'blue';
+			ctx.strokeRect(0, 0, w, h);
+
+			//Top banner
+			banWidth = w/150; banHeight = h/90;	banX = w-w/75;	banY = h/12;
+			drawRect(ctx, cr, banWidth, banHeight , banX , banY, 'black');
+
+			//Prints title at top of screen
+			ctx.font = w/40+"px Georgia";
+			ctx.fillStyle = "Grey";
+			ctx.textAlign = "center";
+			ctx.fillText("MP3 DJ Controller",(w/2),h/13);
+
+			//Drawing the outline of the controller using arcs & lines to give a rectangle with rounded edges.			
+   			drawRect(ctx, cr, rectX, rectY, rectWidth, rectHeight, 'grey');
+      		
+      		//line down the middle of the 'decks'
+      		ctx.moveTo((w/2), rectY);
+      		ctx.lineTo((w/2), rectY + rectHeight + cr);
+      		ctx.stroke();
+
+			//draw deck A
+      		ctx.fillStyle=turnPat;
+      		ctx.beginPath();
+      		ctx.arc(((w/2)-rectX), rectY*3.05, rectX/2, 0*Math.PI, 2*Math.PI);
+      		ctx.fill();
+      		ctx.stroke();	
+      		ctx.strokeStyle = 'black';
+      		ctx.beginPath();
+			ctx.arc(((w/2)-rectX), rectY*3.05, rectX/1.8, 0*Math.PI, 2*Math.PI);
+			ctx.stroke();	
+
+      		//Draw deck B
+      		ctx.beginPath();
+      		ctx.arc(((w/2)+rectX), rectY*3.05 , rectX/2, 0*Math.PI, 2*Math.PI);
+      		ctx.fill();
+      		ctx.stroke();
+      		ctx.strokeStyle = 'black';
+      		ctx.beginPath();
+			ctx.arc(((w/2)+rectX), rectY*3.05, rectX/1.8, 0*Math.PI, 2*Math.PI);
+			ctx.stroke();	
+
+			drawButtons(ctx); //draws all buttons on both deck A and B
+      		
+      		//calling functions that animate setting interval as every 500ms
+      		animate(ctx);
+      		setInterval(function() {animate(ctx);}, 500);
+
+		}
+
+		
+		function animate(ctx) {
+
+			fs = ctx.fillStyle = ledPat;
+
+			//draws track detail lcd panels
+			drawRect(ctx, 5,  rectX + cr/2 , rectY + cr/2 , (rectWidth-5*cr)/2, (rectY- 2*cr), fs);
+			drawRect(ctx, 5 , w - ((rectX + cr/2) + (rectWidth-2*cr)/2) , rectY + cr/2, (rectWidth-5*cr)/2, (rectY- 2*cr), fs);
+
+				//draws grey progress arc if track is loaded, ended or rewinded
+				if (newLoadedA==true || trackA.ended ==true || rewindA ==true){
+
+					ctx.strokeStyle = 'grey';
+	      			ctx.beginPath();
+	      			ctx.arc(((w/2)-rectX), rectY*3.05, rectX/1.9, 0*Math.PI, 2*Math.PI);
+	      			ctx.stroke();	
+	      		}
+	      		if (newLoadedB==true || trackB.ended ==true || rewindB ==true){
+
+					ctx.strokeStyle = 'grey';
+	      			ctx.beginPath();
+	      			ctx.arc(((w/2)+rectX), rectY*3.05, rectX/1.9, 0*Math.PI, 2*Math.PI);
+	      			ctx.stroke();	
+	      		}
+
+	      		//prints track details
+	      		if(newLoadedA==true || isPlayingA == true || isLoadedA==true){
+
+					drawRect(ctx, 5,  rectX + cr/2 , rectY + cr/2 , (rectWidth-5*cr)/2, (rectY- 2*cr), fs);
+					ctx.font = w/80 + "px Georgia";
+					ctx.fillStyle = "White";
+					ctx.textAlign = "left";
+					ctx.fillText("Title: " + trackAname, mover + rectX + cr/2 ,h/4.75);
+
+					var time = trackA.duration - trackA.currentTime; //track time left in seconds
+					var mins = Math.floor(time / 60); // gets minutes of track duration left
+					var seconds = Math.floor(time - mins * 60); // gets seconds of track duration left
+
+						if (seconds<10){ // if seconds number is < 10 it appends a 0, example if seconds = 9 it prints "09"
+							seconds = "0" + seconds;
+						}
+
+					var timeLeft = mins +":"+seconds;
+					ctx.fillText("Time: -"+timeLeft, mover + rectX + cr/2 ,h/4.05);
+
+					ctx.fillText("Volume: "+ Math.round(trackA.volume*100),rectX + 11*cr ,h/4.05);
+
+					var lpfilterA =  Math.round(((24000-lpfA.frequency.value)/24000)*100); //calculates % lpf applied
+					ctx.fillText("LPF: "+lpfilterA+"%",mover + rectX + cr/2 ,h/3.45);
+
+					var hpfilterA =  Math.round((hpfA.frequency.value/24000)*100);//calculates % hpf applied
+					ctx.fillText("HPF: "+hpfilterA+"%",rectX + 11*cr ,h/3.45);
+				}
+
+				if (newLoadedB==true || isPlayingB == true || isLoadedB==true) {
+				
+		  			drawRect(ctx, 5 , w - ((rectX + cr/2) + (rectWidth-2*cr)/2) , rectY + cr/2, (rectWidth-5*cr)/2, (rectY- 2*cr), fs);
+					ctx.font = w/80 + "px Georgia";
+					ctx.fillStyle = "White";
+					ctx.textAlign = "left";
+					ctx.fillText(trackBname,  mover + w - ((rectX + cr/2) + (rectWidth-2*cr)/2) ,h/4.75);
+
+					var timeb = trackB.duration - trackB.currentTime;
+					var minsb = Math.floor(timeb / 60);
+					var secondsb = Math.floor(timeb - minsb * 60);
+
+						if (secondsb<10){
+							secondsb = "0" + secondsb;
+						}
+
+					var timeLeftb = minsb +":"+secondsb;
+					ctx.fillText("Time: -"+timeLeftb,  mover + w - ((rectX + cr/2) + (rectWidth-2*cr)/2) ,h/4.05);
+
+					ctx.fillText("Volume: "+ Math.round(trackB.volume*100), cr*11 + w - ((rectX + cr/2) + (rectWidth-2*cr)/2) ,h/4.05);
+
+					var lpfilterB =  Math.round(((24000-lpfB.frequency.value)/24000)*100);
+					ctx.fillText("LPF: "+lpfilterB+"%", cr/2 + w - ((rectX + cr/2) + (rectWidth-2*cr)/2) ,h/3.45);
+
+					var hpfilterB =  Math.round((hpfB.frequency.value/24000)*100);
+					ctx.fillText("HPF: "+hpfilterB+"%",cr*11 + w - ((rectX + cr/2) + (rectWidth-2*cr)/2)  ,h/3.45);
+					
+				}
+
+
+				if(isPlayingA==true || isLoadedA == true){ //load duration
+		      		
+		      		//prints a green arc corresponding to the amount of the track played around the deck
+		      		ctx.strokeStyle = 'green';
+		      		ctx.beginPath();
+		      		ctx.arc(((w/2)-rectX), rectY*3.05, rectX/1.9, 0*Math.PI, aRad*Math.PI);
+					aDur = trackA.duration;	
+					aTime = trackA.currentTime;
+		      		aRad = ((aTime/aDur)*2); //gets the percentage of track played
+		      		ctx.stroke();	
+	      		}
+
+	      		if(isPlayingB==true){ //load durations
+		      		
+		      		ctx.strokeStyle = 'green';
+		      		ctx.beginPath();
+		      		ctx.arc((w/2)+rectX , rectY*3.05, rectX/1.9, 0*Math.PI, bRad*Math.PI);
+					bDur = trackB.duration;	
+					bTime = trackB.currentTime
+		      		bRad = ((bTime/bDur)*2);
+		      		ctx.stroke();
+	      		}
+
+	      		//flickers green/red light when track is playing 
+     			ctx.fillStyle = i == 0 ? 'red' : 'green';
+     			drawRect(ctx, 2, rectX*3 - cr*1.5 , rectY + cr/2, 2 * mover, 2 * mover, i);
+     			
+     			if(isPlayingA == true){
+	     			if (i == 0){
+	       				i = 1;
+	     			}
+	 				else{
+	     				i = 0;
+	 				}
+	     		}else{
+	     			i = 0;
+	     		}
+
+	     		ctx.fillStyle = b == 0 ? 'red' : 'green';
+     			drawRect(ctx, 2,rectX*3 + (rectWidth - 3*cr)/2 , rectY + cr/2 , 2 * mover, 2 * mover,b );
+     			if(isPlayingB==true){
+	     			if (b == 0){
+	       				 b = 1;
+	       			}
+	 				else{
+	     				b = 0;
+	 				}
+	     		}else{
+	     			b = 0;
+	     		}
+
+	     		if(trackA.ended==true){
+	     			isPlayingA = false;
+	     			aRad = 0;
+	     		}
+
+	     		if(trackB.ended==true){
+	     			isPlayingB = false;
+	     			bRad = 0;
+    			}
+   		}
+   		//Handles all mouse click events for the canvas context
+   		function clickEventHandler(e){
+
+			var cx = e.pageX; //gets click x co-ordinate on canvas
+			var cy = e.pageY; //gets click y co-ordinate on canvas
+
+			if(cx > playAx && cx < (playAx + butAw) && cy > butAy && cy < (butAy + butAh)) {
+			//Play/pause functionality for deck A
+				if(isPlayingA==false && isLoadedA==true){
+					trackA.play();
+					isPlayingA = true;
+					newLoadedA = false;
+				}
+				else{
+					trackA.pause();
+					isPlayingA=false;
+					
+				}
+			}
+			//reload on deck A
+			if(cx > cueAx && cx < (cueAx + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					
+					trackA.load();
+					isPlayingA=false;
+					newLoadedA=true;
+					aRad = 0;
+				}
+
+			//fast forward on deck A
+			if(cx > ffA && cx < (ffA + butAw) && cy > butAy && cy < (butAy + butAh)) {
+					
+					trackA.currentTime += 5;
+					aRad = aRad + ((5/aDur)*2);
+			}
+
+			//rewind on deck A
+			if(cx > rwA && cx < (rwA + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					
+					if(trackA.currentTime - 5>0 ){
+						trackA.currentTime -= 5;
+						aRad = aRad - ((5/aDur)*2);
+					}
+
+					else{ 
+						trackA.currentTime = 0;
+						aRad = 0;
+					}
+					rewindA = true;				
+			}
+
+			//vol+
+			if(cx > volAx && cx < (volAx + butAw) && cy > butAy && cy < (butAy + butAh)) {
+					
+					trackA.volume +=  0.1;
+
+			}
+			//vol-
+			if(cx > volAx2 && cx < (volAx2 + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					trackA.volume -= 0.1;
+			}
+
+
+			
+			//lpf +
+			if(cx > lpfAx && cx < (lpfAx + butAw) && cy > butAy && cy < (butAy + butAh)) {
+					if(lpfA.frequency.value>=1999){
+					 lpfA.frequency.value -=2000;
+					}
+
+					}
+			//lpf -
+			if(cx > lpfAx2 && cx < (lpfAx2 + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					
+					if(lpfA.frequency.value<24000){
+					 lpfA.frequency.value +=2000;
+					}
+
+			}
+			//hpf+
+			if(cx > hpfAx && cx < (hpfAx + butAw) && cy > butAy && cy < (butAy + butAh)) {
+					if(hpfA.frequency.value<24000){
+					 hpfA.frequency.value +=2000;
+					}
+
+					}
+			//hpf-
+			if(cx > hpfAx2 && cx < (hpfAx2 + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					
+					if(hpfA.frequency.value>0){
+					 hpfA.frequency.value -=2000;
+					}
+
+			}
+
+			//Play/pause functionality for deck B
+			if(cx > playBx && cx < (playBx + butAw) && cy > butAy && cy < (butAy + butAh)) {
+			
+				if(isPlayingB==false && isLoadedB==true){
+					trackB.play();
+					isPlayingB = true;
+					newLoadedB = false;
+				}
+				else{
+					trackB.pause();
+					isPlayingB=false;
+				}
+			}
+			//reload on deck B
+			if(cx > cueBx && cx < (cueBx + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					
+					trackB.load();
+					isPlayingB=false;
+					newLoadedB=true;
+					bRad = 0;
+				}
+
+			//fast forward on deck B
+			if(cx > ffB && cx < (ffB + butAw) && cy > butAy && cy < (butAy + butAh)) {
+					
+					trackB.currentTime += 5; //fast forwards track by 5 seconds
+					bRad = bRad + ((5/bDur)*2); //progress arc diameter increaed
+			}
+
+			//rewind on deck A
+			if(cx > rwB && cx < (rwB + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					
+					if(trackB.currentTime - 5>0 ){
+						trackB.currentTime -= 5; //rewinds track by 5 seconds
+						bRad = bRad - ((5/bDur)*2); //progress arc diameter reduced
+					}
+
+					else{ 
+						trackB.currentTime = 0;
+						bRad = 0;
+					}
+					rewindB = true;				
+			}
+
+			//vol+
+			if(cx > volBx && cx < (volBx + butAw) && cy > butAy && cy < (butAy + butAh)) {
+					
+					trackB.volume +=  0.1;
+
+			}
+			//vol-
+			if(cx > volBx2 && cx < (volBx2 + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					trackB.volume -= 0.1;
+			}
+
+
+			
+			//lpf +
+			if(cx > lpfBx && cx < (lpfBx + butAw) && cy > butAy && cy < (butAy + butAh)) {
+					if(lpfB.frequency.value>=1999){
+					 lpfB.frequency.value -=2000;
+					}
+			}
+
+			//lpf -
+			if(cx > lpfBx2 && cx < (lpfBx2 + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					
+					if(lpfB.frequency.value<24000){
+					 lpfB.frequency.value +=2000;
+					}
+
+			}
+			//hpf+
+			if(cx > hpfBx && cx < (hpfBx + butAw) && cy > butAy && cy < (butAy + butAh)) {
+					if(hpfB.frequency.value<24000){
+					 hpfB.frequency.value +=2000;
+					}
+
+					}
+			//hpf-
+			if(cx > hpfBx2 && cx < (hpfBx2 + butAw) && cy > butAy2 && cy < (butAy2 + butAh)) {
+					
+					if(hpfB.frequency.value>0){
+					 hpfB.frequency.value -=2000;
+					}
+			}			
+		}
+
+   		function drawButtons(ctx){
+
+   			//Each button is drawn for both Deck A and Deck B at the same time in this function.
+
+   			//play/pause 
+      		drawRect(ctx, 2, playAx, butAy, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+			ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("► ||", playAx + 0.5*mover , butAy + 2.35*mover);
+			drawRect(ctx, 2, playBx, butAy, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+			ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("► ||", playBx + 0.5*mover , butAy + 2.35*mover);
+
+			//reload 
+			drawRect(ctx , 2, cueAx, butAy2, butAw, butAh, 'black');
+      		ctx.font = mover*1.5+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("Reload", cueAx + 0.2*mover , butAy2 + 2.35*mover);
+			drawRect(ctx , 2, cueBx, butAy2, butAw, butAh, 'black');
+      		ctx.font = mover*1.5+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("Reload", cueBx + 0.2*mover , butAy2 + 2.35*mover);
+
+			//vol + 
+			drawRect(ctx , 2, volAx, butAy, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("vol+", volAx + 0.5*mover , butAy + 2.35*mover);
+			drawRect(ctx , 2, volBx, butAy, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("vol+", volBx + 0.5*mover , butAy + 2.35*mover);
+
+			//vol - 
+			drawRect(ctx , 2, volAx2, butAy2, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("vol-", volAx2 + 0.5*mover , butAy2 + 2.35*mover);
+			drawRect(ctx , 2, volBx2, butAy2, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("vol-", volBx2 + 0.5*mover , butAy2 + 2.35*mover);
+
+			//fast forward 
+			drawRect(ctx , 2, ffA, butAy, butAw, butAh, 'black');
+			ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("►►", ffA + 0.5*mover , butAy + 2.35*mover);
+			drawRect(ctx , 2, ffB, butAy, butAw, butAh, 'black');
+			ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("►►", ffB + 0.5*mover , butAy + 2.35*mover);
+
+			//rewind 
+			drawRect(ctx , 2, rwA, butAy2, butAw, butAh, 'black');
+			ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("◄◄", rwA + 0.5*mover , butAy2 + 2.35*mover);
+			drawRect(ctx , 2, rwB, butAy2, butAw, butAh, 'black');
+			ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("◄◄", rwB + 0.5*mover , butAy2 + 2.35*mover);
+
+			//lpf + 
+			drawRect(ctx , 2, lpfAx, butAy, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("lpf+", lpfAx + 0.5*mover , butAy + 2.35*mover);
+			drawRect(ctx , 2, lpfBx, butAy, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("lpf+", lpfBx + 0.5*mover , butAy + 2.35*mover);
+
+
+			//lpf - 
+			drawRect(ctx , 2, lpfAx2, butAy2, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("lpf-", lpfAx2 + 0.5*mover , butAy2 + 2.35*mover);
+			drawRect(ctx , 2, lpfBx2, butAy2, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("lpf-", lpfBx2 + 0.5*mover , butAy2 + 2.35*mover);
+
+			//hpf + 
+			drawRect(ctx , 2, hpfAx, butAy, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("hpf+", hpfAx + 0.5*mover , butAy + 2.35*mover);
+			drawRect(ctx , 2, hpfBx, butAy, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("hpf+", hpfBx + 0.5*mover , butAy + 2.35*mover);
+
+			// hpf - 
+			drawRect(ctx , 2, hpfAx2, butAy2, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("hpf-", hpfAx2 + 0.5*mover , butAy2 + 2.35*mover);
+			drawRect(ctx , 2, hpfBx2, butAy2, butAw, butAh, 'black');
+      		ctx.font = mover*2+"px Georgia";
+      		ctx.fillStyle = "White";
+			ctx.textAlign = "left";
+			ctx.fillText("hpf-", hpfBx2 + 0.5*mover , butAy2 + 2.35*mover);
+			
+   		}
+
+   		function loadA(){
+
+			previewA = document.getElementById('trackA'); //gets audio obj
+			fileA   = document.getElementById('loadDeckA').files[0]; //gets file selected from file input obj
+			readerA  = new FileReader(); //declares file reader obj
+
+			if(isPlayingA){ //checks if theres a track playing currenyling
+				
+				isPlayingA=false; //sets is playing to false
+
+				//asks for confirmation if track is playing
+			  	if(confirm("Track Playing on Deck A. Are You Sure You Want To Load A New Track?")){ 
+
+			  		readerA.addEventListener("load", function () {//adds event listener to file reader.
+			    	trackA.src = readerA.result; //sets the audio object source to the file path read from file reader
+			  		}, false);
+
+			  		if (fileA) { //if its a file set the reader to read the file
+			   		 readerA.readAsDataURL(fileA);
+			  		}
+			  	}
+			}
+			else{ //if no track is playing
+
+					readerA.addEventListener("load", function () {
+			    	trackA.src = readerA.result; //sets audio obj source.
+
+			  		}, false);
+
+			  		if (fileA) { //if its a file set the reader to read the file
+			   		 readerA.readAsDataURL(fileA);
+			  		}
+			}
+			isLoadedA = true; //deck A successfully loaded
+			newLoadedA = true; //boolean to show a new file is loaded
+			aRad = 0; //sets the radius of the track progress to be 0 when new track is loaded
+			trackAname = fileA.name; //set file name
+
+			if (trackAname.length > w/30){ //if the filename is large it gets a substring and append "..." so it can fit on panel
+					trackAname = trackAname.substring(0,w/33) + '...';
+				}
+
+			source = contextA.createMediaElementSource(trackA); //creates context source
+ 			source.connect(lpfA); //connects source to low pass filter
+ 			lpfA.connect(contextA.destination); //sets output destination to computer speakers...or whatever your default setup is
+ 			lpfA.frequency.value = lpfDef; //resets default frequency.
+
+ 			source.connect(hpfA);
+ 			hpfA.connect(contextA.destination);
+ 			hpfA.frequency.value = hpfDef;
+		}
+
+		function loadB(){ //same as load A function
+
+			previewB = document.getElementById('trackB');
+			fileB   = document.getElementById('loadDeckB').files[0];
+			readerB  = new FileReader();
+
+			if(isPlayingB){
+				isPlayingB = false;
+			  	if(confirm("Track Playing on Deck B. Are You Sure You Want To Load A New Track?")){
+			  		readerB.addEventListener("load", function () {
+			    	trackB.src = readerB.result;
+			  		}, false);
+
+			  		if (fileB) {
+			   		 readerB.readAsDataURL(fileB);
+			  		}
+			  	}
+			}
+			else{
+					readerB.addEventListener("load", function () {
+			    	trackB.src = readerB.result;
+			  		}, false);
+
+			  		if (fileB) {
+			   		 readerB.readAsDataURL(fileB);
+			  		}
+			}
+		
+			isLoadedB = true; //deck A successfully loaded
+			newLoadedB = true; //boolean to show a new file is loaded
+			bRad = 0;
+			trackBname = fileB.name;
+
+			if (trackBname.length > w/30){
+					trackBname = trackBname.substring(0,w/30) + '...';
+				}
+
+			source = contextB.createMediaElementSource(trackB);
+ 			source.connect(lpfB);
+ 			lpfB.connect(contextB.destination);
+ 			lpfB.frequency.value = lpfDef;
+
+ 			source.connect(hpfB);
+ 			hpfB.connect(contextB.destination);
+ 			hpfB.frequency.value = hpfDef;
+		}
+
+		//function to draw rectangle with arc'd corners
+		function drawRect(ctx, rad, xpos, ypos, wid, hei, fs){
+
+   			ctx.beginPath();
+   			ctx.fillStyle = fs;
+			ctx.strokeStyle = 'black';
+      		ctx.moveTo(rad + xpos, ypos);
+      		ctx.lineTo(xpos + wid - rad, ypos);
+      		ctx.arcTo(xpos + wid, ypos, xpos + wid, ypos + rad, rad);
+      		ctx.lineTo(xpos + wid, ypos + hei);
+      		ctx.arcTo(xpos + wid, ypos + hei + rad, xpos + wid - rad , ypos + rad + hei , rad);
+      		ctx.lineTo(xpos + rad, ypos + rad + hei);
+      		ctx.arcTo(xpos , ypos + hei + rad, xpos, ypos + hei - rad, rad);
+      		ctx.lineTo(xpos, ypos + rad);
+      		ctx.arcTo(xpos, ypos , xpos + rad, ypos, rad);
+      		ctx.stroke();
+      		ctx.fill();
+   		}
+	</script>
+</html>
